@@ -1,0 +1,88 @@
+# .github/workflows/docker-publish.yml
+name: Docker Image CI
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Run weekly on Sunday at midnight
+  push:
+    branches: [ "main" ]
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:  # Allow manual triggers
+
+jobs:
+  check-base-image:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Check for base image updates
+        id: check
+        run: |
+          # Get the current digest of node:20
+          NEW_DIGEST=$(docker pull node:20-slim | grep -i digest | cut -d' ' -f2)
+          
+          # Create marker file directory if it doesn't exist
+          mkdir -p ./markers
+          
+          # Path to store the last known digest
+          DIGEST_FILE="./markers/last_node_digest"
+          
+          # If digest file doesn't exist, create it
+          if [ ! -f "$DIGEST_FILE" ]; then
+            echo $NEW_DIGEST > "$DIGEST_FILE"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Base image digest file created for the first time"
+            exit 0
+          fi
+          
+          # Read the last known digest
+          OLD_DIGEST=$(cat "$DIGEST_FILE")
+          
+          # Compare digests
+          if [ "$NEW_DIGEST" != "$OLD_DIGEST" ]; then
+            echo $NEW_DIGEST > "$DIGEST_FILE"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Base image has been updated"
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "Base image is up to date"
+          fi
+
+  build:
+    needs: check-base-image
+    if: ${{ needs.check-base-image.outputs.should_build == 'true' || github.event_name != 'schedule' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ghcr.io/tomasen/node-media
+          tags: |
+            type=semver,pattern={{version}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
