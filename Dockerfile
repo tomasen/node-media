@@ -37,7 +37,9 @@ RUN apt-get update && apt-get install -y \
     libxtst6 \
     wget \
     xdg-utils \
+    python3 python3-pip \
     --no-install-recommends \
+    && pip3 install --break-system-packages pymeshfix \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Puppeteer to use system Chrome instead of downloading its own
